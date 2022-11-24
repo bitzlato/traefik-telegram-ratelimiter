@@ -1,0 +1,16 @@
+displayName: Telegram ID Rate Limit Plugin
+type: middleware
+
+import: github.com/bitzlato/traefik-telegram-ratelimiter
+
+summary: "Middleware plugin to prevent DDoS attacks on telegram bots limiting request by messages' telegram ids"
+
+testData:
+  whitelist:
+    - 1
+    - 2
+
+  blacklist:
+    - 3
+
+  

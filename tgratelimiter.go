@@ -2,6 +2,7 @@
 package traefik_telegram_ratelimiter
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,6 +11,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -174,7 +177,26 @@ func extractTgID(r io.Reader) (int64, error) {
 }
 
 func readIDList(fp string) (map[int64]struct{}, error) {
-	return nil, nil
+	abs, err := filepath.Abs(fp)
+	if err != nil {
+		return nil, err
+	}
+
+	file, err := os.Open(abs)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	ret := make(map[int64]struct{})
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if id, err := strconv.ParseInt(line, 10, 64); err == nil {
+			ret[id] = struct{}{}
+		}
+	}
+	return ret, nil
 }
 
 type expiryItem struct {

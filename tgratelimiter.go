@@ -6,8 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"sync"
@@ -17,6 +17,11 @@ import (
 const defaultHitMapSize = 50000
 
 var ErrUnknownMessageFormat = errors.New("unknown incoming telegram message format")
+
+var (
+	loggerInfo  = log.New(os.Stdout, "INFO: TelegramRateLimiterPlugin: ", log.Ldate|log.Ltime)
+	loggerError = log.New(os.Stderr, "ERROR: TelegramRateLimiterPlugin: ", log.Ldate|log.Ltime)
+)
 
 // Config holds configuration to pass to the plugin
 type Config struct {
@@ -99,14 +104,14 @@ func (r *rateLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	tgID, err := extractTgID(tee)
 	// skip rate limiting if failed to retrieve tg ID
 	if err != nil {
-		os.Stderr.WriteString(fmt.Sprintf("error retrieving telegram id: %v", err))
+		loggerError.Printf("error retrieving telegram id: %v", err)
 		r.next.ServeHTTP(rw, req)
 		return
 	}
 
 	// if id is blacklisted skip handling and return 200 OK
 	if _, ok := r.blacklist[tgID]; ok {
-		os.Stdout.WriteString(fmt.Sprintf("rejecting blacklisted id: %d", tgID))
+		loggerInfo.Printf("rejecting blacklisted id: %d", tgID)
 		silentReject(rw)
 		return
 	}
@@ -117,12 +122,12 @@ func (r *rateLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// if is whitelisted tg id check wlLimit
 	if isWl {
 		if r.wlLimit >= 0 && hits > r.wlLimit {
-			os.Stdout.WriteString(fmt.Sprintf("rejecting whitelisted id: %d, limit: %d, hits: %d", tgID, r.wlLimit, hits))
+			loggerInfo.Printf("rejecting whitelisted id: %d, limit: %d, hits: %d", tgID, r.wlLimit, hits)
 			silentReject(rw)
 			return
 		}
 	} else if r.limit >= 0 && hits > r.limit {
-		os.Stdout.WriteString(fmt.Sprintf("rejecting regular id: %d, limit: %d, hits: %d", tgID, r.limit, hits))
+		loggerInfo.Printf("rejecting regular id: %d, limit: %d, hits: %d", tgID, r.limit, hits)
 		silentReject(rw)
 		return
 	}
@@ -202,7 +207,7 @@ func newExpiryMap(capacity int) *expiryMap {
 // incNGet returns number of hits by the specified telegram id
 func (e *expiryMap) incNGet(id int64) int32 {
 	e.mu.Lock()
-	defer e.mu.Lock()
+	defer e.mu.Unlock()
 
 	return 1
 }

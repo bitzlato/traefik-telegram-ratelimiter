@@ -277,7 +277,7 @@ func (e *expiryMap) free(count int) {
 			break
 		}
 		id := e.hits[e.head].id
-		// isUpdatedID means the id mapping has been deleted already
+		// isDeletedID means the id mapping has been deleted already
 		if id != isDeletedID {
 			delete(e.idxs, id)
 			e.hits[e.head].id = isDeletedID

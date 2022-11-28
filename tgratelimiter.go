@@ -18,6 +18,7 @@ import (
 )
 
 const defaultHitTableSize = 50000
+const isDeletedID int64 = -1 << 63
 
 var (
 	ErrUnknownMessageFormat = errors.New("unknown incoming telegram message format")
@@ -249,6 +250,12 @@ func (e *expiryMap) incNGet(id int64, expire int64) int32 {
 	}
 	// when the record exists but has expired
 	if e.hits[idx].expires < time.Now().UTC().Unix() {
+		// delete the id mapping and mark the queue record id
+		// as deleted so when the head of the queue gets to
+		// the record it will not remove the newly created mapping
+		delete(e.idxs, id)
+		e.hits[idx].id = isDeletedID
+
 		e.insert(expiryHits{id, 1, time.Now().UTC().Unix() + expire})
 		return 1
 	}
@@ -270,7 +277,11 @@ func (e *expiryMap) free(count int) {
 			break
 		}
 		id := e.hits[e.head].id
-		delete(e.idxs, id)
+		// isUpdatedID means the id mapping has been deleted already
+		if id != isDeletedID {
+			delete(e.idxs, id)
+			e.hits[e.head].id = isDeletedID
+		}
 		e.head = (e.head + 1) % e.cap
 		e.size--
 	}

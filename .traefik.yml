@@ -6,10 +6,8 @@ import: github.com/bitzlato/traefik-telegram-ratelimiter
 summary: "Middleware plugin to prevent DDoS attacks on telegram bots limiting request by messages' telegram ids"
 
 testData:
-  hitTableSize: 4
-  limit: 2
-  whitelistLimit: 3
-  expire: 10
-  whitelist: "./test/whitelist.ids"
-  blacklist: "./test/blacklist.ids"
+  hitTableSize: 10
+  limit: -1
+  whitelistLimit: -1
+  expire: 86400
 

@@ -17,9 +17,12 @@ import (
 	"time"
 )
 
-const defaultHitMapSize = 50000
+const defaultHitTableSize = 50000
 
-var ErrUnknownMessageFormat = errors.New("unknown incoming telegram message format")
+var (
+	ErrUnknownMessageFormat = errors.New("unknown incoming telegram message format")
+	ErrInvalidHitTableSize  = errors.New("hit table size cannot be 0 or less")
+)
 
 var (
 	loggerInfo  = log.New(os.Stdout, "INFO: TelegramRateLimiterPlugin: ", log.Ldate|log.Ltime)
@@ -28,14 +31,14 @@ var (
 
 // Config holds configuration to pass to the plugin
 type Config struct {
-	// HitMapSize defined the max size of the hit table
-	HitMapSize int `json:"hitMapSize,omitempty" yaml:"hitMapSize,omitempty" toml:"hitMapSize,omitempty" export:"true"`
+	// HitTableSize defined the max size of the hit table
+	HitTableSize int `json:"hitMapSize,omitempty" yaml:"hitMapSize,omitempty" toml:"hitMapSize,omitempty" export:"true"`
 	// Limit defines the hit limit for regular account ids. -1 defines infinite limit.
 	Limit int32 `json:"limit,omitempty" yaml:"limit,omitempty" toml:"limit:omitempty" export:"true"`
 	// WhitelistLimit defines hit limit for whitelisted account ids. -1 defines infinite limit.
 	WhitelistLimit int32 `json:"whitelistLimit,omitempty" yaml:"whitelistLimit,omitempty" toml:"whitelistLimit,omitempty" export:"true"`
-	// TTL is a number in seconds to keep the hit record for a single id
-	TTL time.Duration `json:"ttl,omitempty" yaml:"ttl,omitempty" toml:"ttl,omitempty" export:"true"`
+	// Expire is a number in seconds to keep the hit record for a single id
+	Expire int64 `json:"expire,omitempty" yaml:"expire,omitempty" toml:"expire,omitempty" export:"true"`
 	// Whitelist is a path to the file with whitelisted ids. Each id on separate line
 	Whitelist *string `json:"whitelist,omitempty" yaml:"whitelist,omitempty" toml:"whitelist,omitempty" export:"true"`
 	// Blacklist is a path to the file with blacklisted ids.
@@ -46,10 +49,10 @@ type Config struct {
 // CreateConfig populates the Config data object
 func CreateConfig() *Config {
 	return &Config{
-		HitMapSize:     defaultHitMapSize,
+		HitTableSize:   defaultHitTableSize,
 		Limit:          -1,
 		WhitelistLimit: -1,
-		TTL:            time.Duration(24) * time.Hour, // 24 hours
+		Expire:         86400, // 24 hours
 	}
 }
 
@@ -57,8 +60,8 @@ func CreateConfig() *Config {
 type rateLimiter struct {
 	next http.Handler
 	name string
-	// ttl of the hit record
-	ttl time.Duration
+	// expire time in seconds of the hit record
+	expire int64
 	// maximum hits limit
 	limit int32
 	// whitelist limit
@@ -73,6 +76,10 @@ type rateLimiter struct {
 
 // New instantiates and returns the required components used to handle a HTTP request
 func New(ctx context.Context, next http.Handler, config *Config, name string) (http.Handler, error) {
+	if config.HitTableSize <= 0 {
+		return nil, ErrInvalidHitTableSize
+	}
+
 	var err error
 	var wl, bl map[int64]struct{}
 	if config.Whitelist != nil {
@@ -92,12 +99,12 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 	return &rateLimiter{
 		next:      next,
 		name:      name,
-		ttl:       config.TTL,
+		expire:    config.Expire,
 		limit:     config.Limit,
 		wlLimit:   config.WhitelistLimit,
 		whitelist: wl,
 		blacklist: bl,
-		hits:      newExpiryMap(config.HitMapSize),
+		hits:      newExpiryMap(config.HitTableSize),
 	}, nil
 }
 
@@ -120,7 +127,7 @@ func (r *rateLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	}
 
 	_, isWl := r.whitelist[tgID]
-	hits := r.hits.incNGet(tgID)
+	hits := r.hits.incNGet(tgID, r.expire)
 
 	// if is whitelisted tg id check wlLimit
 	if isWl {
@@ -139,6 +146,7 @@ func (r *rateLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 
 func silentReject(rw http.ResponseWriter) {
 	rw.Header().Add("Content-Type", "text/plain")
+	rw.Header().Add("Connection", "keep-alive")
 	rw.Write([]byte(http.StatusText(http.StatusOK)))
 }
 
@@ -199,37 +207,84 @@ func readIDList(fp string) (map[int64]struct{}, error) {
 	return ret, nil
 }
 
-type expiryItem struct {
+type expiryHits struct {
 	id      int64
+	hits    int32
 	expires int64
 }
 
 type expiryMap struct {
 	mu sync.Mutex
-	// max hit table capacity
-	capacity int
-	hits     map[int64]int32
-	// circular array keeping records about hit expiration times
-	expires []expiryItem
-	// starting and ending indexes of the `expires` circular array
-	st, end uint32
+	// max hit table cap
+	cap int
+	// map telegram id to the index in the `hits` slice
+	idxs map[int64]int
+	// circular queue keeping records about hits and expiration times
+	hits []expiryHits
+	// starting index and the size of the `hits` circular array
+	head, size int
 }
 
 func newExpiryMap(capacity int) *expiryMap {
 	return &expiryMap{
-		mu:       sync.Mutex{},
-		capacity: capacity,
-		hits:     make(map[int64]int32, capacity),
-		expires:  make([]expiryItem, capacity),
-		st:       0,
-		end:      0,
+		mu:   sync.Mutex{},
+		cap:  capacity,
+		idxs: make(map[int64]int, capacity),
+		hits: make([]expiryHits, capacity),
+		head: 0,
+		size: 0,
 	}
 }
 
 // incNGet returns number of hits by the specified telegram id
-func (e *expiryMap) incNGet(id int64) int32 {
+func (e *expiryMap) incNGet(id int64, expire int64) int32 {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	return 1
+	idx, ok := e.idxs[id]
+	// when the record does not exist
+	if !ok {
+		e.insert(expiryHits{id, 1, time.Now().UTC().Unix() + expire})
+		return 1
+	}
+	// when the record exists but has expired
+	if e.hits[idx].expires < time.Now().UTC().Unix() {
+		e.insert(expiryHits{id, 1, time.Now().UTC().Unix() + expire})
+		return 1
+	}
+
+	e.hits[idx].hits++
+	return e.hits[idx].hits
+}
+
+// full return wether the circular queue is full
+func (e *expiryMap) full() bool {
+	return e.size == e.cap
+}
+
+// free removes one item from the start of the circular queue
+// and the corresponding id mapping
+func (e *expiryMap) free(count int) {
+	for i := 0; i < count; i++ {
+		if e.size == 0 {
+			break
+		}
+		id := e.hits[e.head].id
+		delete(e.idxs, id)
+		e.head = (e.head + 1) % e.cap
+		e.size--
+	}
+}
+
+// insert inserts one item into the circular queue
+// and inserts corresponding id mapping
+func (e *expiryMap) insert(h expiryHits) {
+	if e.full() {
+		e.free(1)
+	}
+
+	idx := (e.head + e.size) % e.cap
+	e.idxs[h.id] = idx
+	e.hits[idx] = h
+	e.size++
 }

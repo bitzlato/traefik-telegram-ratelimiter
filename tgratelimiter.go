@@ -33,18 +33,18 @@ var (
 // Config holds configuration to pass to the plugin
 type Config struct {
 	// HitTableSize defined the max size of the hit table
-	HitTableSize int `json:"hitMapSize,omitempty" yaml:"hitMapSize,omitempty" toml:"hitMapSize,omitempty" export:"true"`
+	HitTableSize int `json:"hitMapSize,omitempty" yaml:"hitMapSize,omitempty" toml:"hitMapSize,omitempty"`
 	// Limit defines the hit limit for regular account ids. -1 defines infinite limit.
-	Limit int32 `json:"limit,omitempty" yaml:"limit,omitempty" toml:"limit:omitempty" export:"true"`
+	Limit int32 `json:"limit,omitempty" yaml:"limit,omitempty" toml:"limit:omitempty"`
 	// WhitelistLimit defines hit limit for whitelisted account ids. -1 defines infinite limit.
-	WhitelistLimit int32 `json:"whitelistLimit,omitempty" yaml:"whitelistLimit,omitempty" toml:"whitelistLimit,omitempty" export:"true"`
+	WhitelistLimit int32 `json:"whitelistLimit,omitempty" yaml:"whitelistLimit,omitempty" toml:"whitelistLimit,omitempty"`
 	// Expire is a number in seconds to keep the hit record for a single id
-	Expire int64 `json:"expire,omitempty" yaml:"expire,omitempty" toml:"expire,omitempty" export:"true"`
+	Expire int64 `json:"expire,omitempty" yaml:"expire,omitempty" toml:"expire,omitempty"`
 	// Whitelist is a path to the file with whitelisted ids. Each id on separate line
-	Whitelist *string `json:"whitelist,omitempty" yaml:"whitelist,omitempty" toml:"whitelist,omitempty" export:"true"`
+	Whitelist *string `json:"whitelist,omitempty" yaml:"whitelist,omitempty" toml:"whitelist,omitempty"`
 	// Blacklist is a path to the file with blacklisted ids.
 	// IDs from blacklist are mutely ignored without counting hits
-	Blacklist *string `json:"blacklist,omitempty" yaml:"blacklist,omitempty" toml:"blacklist,omitempty" export:"true"`
+	Blacklist *string `json:"blacklist,omitempty" yaml:"blacklist,omitempty" toml:"blacklist,omitempty"`
 }
 
 // CreateConfig populates the Config data object

@@ -1,3 +1,3 @@
-module github.com/bitzlato/traefik_telegram_ratelimiter
+module github.com/bitzlato/traefik-telegram-ratelimiter
 
 go 1.18

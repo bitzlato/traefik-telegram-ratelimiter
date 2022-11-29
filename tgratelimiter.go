@@ -33,9 +33,9 @@ var (
 // Config holds configuration to pass to the plugin
 type Config struct {
 	// HitTableSize defined the max size of the hit table
-	HitTableSize int `json:"hitMapSize,omitempty" yaml:"hitMapSize,omitempty" toml:"hitMapSize,omitempty"`
+	HitTableSize int `json:"hitTableSize,omitempty" yaml:"hitTableSize,omitempty" toml:"hitTableSize,omitempty"`
 	// Limit defines the hit limit for regular account ids. -1 defines infinite limit.
-	Limit int32 `json:"limit,omitempty" yaml:"limit,omitempty" toml:"limit:omitempty"`
+	Limit int32 `json:"limit,omitempty" yaml:"limit,omitempty" toml:"limit,omitempty"`
 	// WhitelistLimit defines hit limit for whitelisted account ids. -1 defines infinite limit.
 	WhitelistLimit int32 `json:"whitelistLimit,omitempty" yaml:"whitelistLimit,omitempty" toml:"whitelistLimit,omitempty"`
 	// Expire is a number in seconds to keep the hit record for a single id

@@ -18,6 +18,7 @@ import (
 )
 
 const defaultHitTableSize = 50000
+const defaultExpire = 86400 // 24 hours
 const isDeletedID int64 = -1 << 63
 
 var (
@@ -53,7 +54,7 @@ func CreateConfig() *Config {
 		HitTableSize:   defaultHitTableSize,
 		Limit:          -1,
 		WhitelistLimit: -1,
-		Expire:         86400, // 24 hours
+		Expire:         defaultExpire,
 	}
 }
 

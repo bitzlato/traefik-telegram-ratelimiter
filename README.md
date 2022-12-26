@@ -18,7 +18,7 @@ experimental:
   plugins:
     traefik-telegram-ratelimiter:
       moduleName: github.com/bitzlato/traefik-telegram-ratelimiter
-      version: "v0.0.5"
+      version: "v0.0.6"
 
 entryPoints:
   https:
@@ -57,7 +57,9 @@ http:
           whitelistLimit: -1
           expire: 86400 # 24 hours
           whitelist: "/srv/config/tg-bot/whitelist.ids"
+          whitelistURL: "https://server.com/whitelist.ids"
           blacklist: "/srv/config/tg-bot/blacklist.ids"
+          blacklistURL: "https://server.com/blacklist.ids"
     strip-webhook:
       stipPrefix:
         prefixes:
@@ -73,4 +75,7 @@ This plugin supports the following configuration parameters:
 - **limit** -- maximum number of hits (messages) to allow during the `expire` period. `-1` means the limit is not applied. `0` -- no hits allowed at all. Default value: `-1` (do not apply hit limit)
 - **whitelistLimit** -- maximum number of hits to allow for IDs found in the `whitelist` file. Has the same special cases as for the `limit` parameter. Default value: `-1` (do not apply hit limit)
 - **whitelist** -- path to the file containing telegram IDs to apply `whitelistLimit` to. The file should contain each numeric ID on a separate line. Default value: `nil`
+- **whitelistURL** -- URL of the resource returning whilisted IDs. The same requirements as for `blacklist` file. Default: `nil`
 - **blacklist** -- path to the file containing telegram IDs to block right away. Hits counting is not applied to the blacklisted IDs. Default value: `nil`
+- **blacklistURL** - URL to the resource returning blacklisted IDs. Default: `nil`
+

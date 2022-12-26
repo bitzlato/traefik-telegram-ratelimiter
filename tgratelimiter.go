@@ -132,6 +132,7 @@ func (r *rateLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	var buf bytes.Buffer
 	tee := io.TeeReader(req.Body, &buf)
 	tgID, err := extractTgID(tee)
+	req.Body = io.NopCloser(&buf)
 	// skip rate limiting if failed to retrieve tg ID
 	if err != nil {
 		loggerError.Printf("error retrieving telegram id: %v", err)

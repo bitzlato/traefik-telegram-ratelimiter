@@ -18,7 +18,7 @@ experimental:
   plugins:
     traefik-telegram-ratelimiter:
       moduleName: github.com/bitzlato/traefik-telegram-ratelimiter
-      version: "v0.0.6"
+      version: "v0.0.7"
 
 entryPoints:
   https:

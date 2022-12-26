@@ -43,9 +43,13 @@ type Config struct {
 	Expire int64 `json:"expire,omitempty" yaml:"expire,omitempty" toml:"expire,omitempty"`
 	// Whitelist is a path to the file with whitelisted ids. Each id on separate line
 	Whitelist *string `json:"whitelist,omitempty" yaml:"whitelist,omitempty" toml:"whitelist,omitempty"`
+	// Whitelist URL to load the list with whitelisted ids from. The same format as for the file
+	WhitelistURL *string `json:"whitelistURL,omitempty" yaml:"whitelistURL,omitempty" toml:"whitelistURL,omitempty"`
 	// Blacklist is a path to the file with blacklisted ids.
 	// IDs from blacklist are mutely ignored without counting hits
 	Blacklist *string `json:"blacklist,omitempty" yaml:"blacklist,omitempty" toml:"blacklist,omitempty"`
+	// BlacklistURL
+	BlacklistURL *string `json:"blacklistURL,omitempty" yaml:"blacklistURL,omitempty" toml:"blacklistURL,omitempty"`
 }
 
 // CreateConfig populates the Config data object
@@ -82,17 +86,31 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		return nil, ErrInvalidHitTableSize
 	}
 
-	var err error
-	var wl, bl map[int64]struct{}
+	wl := make(map[int64]struct{}, 1024)
+	bl := make(map[int64]struct{}, 1024)
 	if config.Whitelist != nil {
-		wl, err = readIDList(*config.Whitelist)
+		err := readIDFile(*config.Whitelist, wl)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if config.WhitelistURL != nil {
+		err := readIDURL(*config.WhitelistURL, wl)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	if config.Blacklist != nil {
-		bl, err = readIDList(*config.Blacklist)
+		err := readIDFile(*config.Blacklist, bl)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if config.BlacklistURL != nil {
+		err := readIDURL(*config.BlacklistURL, bl)
 		if err != nil {
 			return nil, err
 		}
@@ -186,27 +204,41 @@ func extractTgID(r io.Reader) (int64, error) {
 	return 0, ErrUnknownMessageFormat
 }
 
-func readIDList(fp string) (map[int64]struct{}, error) {
+func readIDFile(fp string, m map[int64]struct{}) error {
 	abs, err := filepath.Abs(fp)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	file, err := os.Open(abs)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer file.Close()
 
-	ret := make(map[int64]struct{})
-	scanner := bufio.NewScanner(file)
+	scanIDs(file, m)
+	return nil
+}
+
+func readIDURL(url string, m map[int64]struct{}) error {
+	res, err := http.Get(url)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+
+	scanIDs(res.Body, m)
+	return nil
+}
+
+func scanIDs(r io.Reader, m map[int64]struct{}) {
+	scanner := bufio.NewScanner(r)
 	for scanner.Scan() {
 		line := scanner.Text()
 		if id, err := strconv.ParseInt(line, 10, 64); err == nil {
-			ret[id] = struct{}{}
+			m[id] = struct{}{}
 		}
 	}
-	return ret, nil
 }
 
 type expiryHits struct {

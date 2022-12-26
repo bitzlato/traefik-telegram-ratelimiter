@@ -1,6 +1,6 @@
 # Traefik Plugin For Rate Limiting Incoming Telegram Messages
 
-![Github Actions](https://img.shields.io/github/workflow/status/bitzlato/traefik-telegram-ratelimiter/Audit?style=flat-square) ![Go Report](https://goreportcard.com/badge/github.com/bitzlato/traefik-telegram-ratelimiter?style=flat-square) ![Go Version](https://img.shields.io/github/go-mod/go-version/bitzlato/traefik-telegram-ratelimiter?style=flat-square) ![Latest Release](https://img.shields.io/github/release/bitzlato/traefik-telegram-ratelimiter/all.svg?style=flat-square) 
+![Github Actions](https://img.shields.io/github/actions/workflow/status/bitzlato/traefik-telegram-ratelimiter/.github/workflows/audit.yml?branch=master&style=flat-square) ![Go Report](https://goreportcard.com/badge/github.com/bitzlato/traefik-telegram-ratelimiter?style=flat-square) ![Go Version](https://img.shields.io/github/go-mod/go-version/bitzlato/traefik-telegram-ratelimiter?style=flat-square) ![Latest Release](https://img.shields.io/github/release/bitzlato/traefik-telegram-ratelimiter/all.svg?style=flat-square) 
 
 This traefik plugin allows you to define limits for incoming telegram messages based on the messages' IDs. Define exceptions for certain IDs with higher limits and to block certain IDs at all.
 

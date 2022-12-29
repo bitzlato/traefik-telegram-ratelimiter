@@ -7,12 +7,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -50,6 +53,10 @@ type Config struct {
 	Blacklist *string `json:"blacklist,omitempty" yaml:"blacklist,omitempty" toml:"blacklist,omitempty"`
 	// BlacklistURL
 	BlacklistURL *string `json:"blacklistURL,omitempty" yaml:"blacklistURL,omitempty" toml:"blacklistURL,omitempty"`
+	// enable management console
+	Console bool `json:"console" yaml:"console" toml:"console"`
+	// management console port
+	ConsoleAddress *string `json:"consoleAddress" yaml:"consoleAddress" toml:"consoleAddress"`
 }
 
 // CreateConfig populates the Config data object
@@ -116,7 +123,7 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		}
 	}
 
-	return &rateLimiter{
+	r := &rateLimiter{
 		next:      next,
 		name:      name,
 		expire:    config.Expire,
@@ -125,7 +132,17 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		whitelist: wl,
 		blacklist: bl,
 		hits:      newExpiryMap(config.HitTableSize),
-	}, nil
+	}
+
+	if config.Console {
+		err := r.startConsole(*config.ConsoleAddress)
+		if err != nil {
+			loggerError.Printf("failed to start management console: %s", err.Error())
+			return nil, err
+		}
+	}
+
+	return r, nil
 }
 
 func (r *rateLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
@@ -271,7 +288,7 @@ func newExpiryMap(capacity int) *expiryMap {
 	}
 }
 
-// incNGet returns number of hits by the specified telegram id
+// incNGet increments and returns number of hits of the specified telegram id
 func (e *expiryMap) incNGet(id int64, expire int64) int32 {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -296,6 +313,37 @@ func (e *expiryMap) incNGet(id int64, expire int64) int32 {
 
 	e.hits[idx].hits++
 	return e.hits[idx].hits
+}
+
+// get returns numbers of hits of the specified telegram id
+func (e *expiryMap) get(id int64) int32 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	idx, ok := e.idxs[id]
+	if !ok {
+		return 0
+	}
+
+	if e.hits[idx].expires < time.Now().UTC().Unix() {
+		return 0
+	}
+
+	return e.hits[idx].hits
+}
+
+// reset resets hit counter for the specified telegram id
+// returns wether the id was found in the map
+func (e *expiryMap) reset(id int64) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	idx, ok := e.idxs[id]
+	if ok {
+		e.hits[idx].hits = 0
+	}
+
+	return ok
 }
 
 // full return wether the circular queue is full
@@ -332,4 +380,99 @@ func (e *expiryMap) insert(h expiryHits) {
 	e.idxs[h.id] = idx
 	e.hits[idx] = h
 	e.size++
+}
+
+func (r *rateLimiter) startConsole(addr string) error {
+	l, err := net.Listen("tcp", addr)
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				loggerError.Printf("CONSOLE: error accepting connection: %s", err.Error())
+				continue
+			}
+
+			go r.handleConnection(c)
+		}
+	}()
+
+	return nil
+}
+
+func (r *rateLimiter) handleConnection(c net.Conn) {
+	defer c.Close()
+
+outer:
+	for {
+		data, err := bufio.NewReader(c).ReadString('\n')
+		if err == io.EOF {
+			return
+		} else if err != nil {
+			loggerError.Printf("CONSOLE: error reading console socket: %s", err.Error())
+			return
+		}
+
+		cmdLine := strings.ToLower(strings.TrimSpace(string(data)))
+		args := strings.Split(cmdLine, " ")
+
+		switch args[0] {
+		case "show", "reset":
+			id, err := parseTgID(args[1])
+			if err != nil {
+				c.Write([]byte(err.Error() + "\n"))
+				continue
+			}
+			if args[0] == "show" {
+				c.Write([]byte(strconv.Itoa(int(r.hits.get(id))) + "\n"))
+			} else {
+				r.hits.reset(id)
+			}
+		case "add", "del", "has":
+			id, err := parseTgID(args[2])
+			if err != nil {
+				c.Write([]byte(err.Error() + "\n"))
+				continue
+			}
+			var m map[int64]struct{}
+			switch args[1] {
+			case "bl":
+				m = r.blacklist
+			case "wl":
+				m = r.whitelist
+			default:
+				loggerError.Println("must specify either `bl` or `wl` list as the second argument")
+				continue
+			}
+
+			switch args[0] {
+			case "add":
+				m[id] = struct{}{}
+			case "del":
+				delete(m, id)
+			case "has":
+				var result string
+				_, ok := m[id]
+				if ok {
+					result = "true"
+				} else {
+					result = "false"
+				}
+				c.Write([]byte(result + "\n"))
+			}
+		case "exit":
+			break outer
+		}
+	}
+}
+
+func parseTgID(s string) (int64, error) {
+	id, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse telegram id: %s", s)
+	}
+	return id, nil
 }

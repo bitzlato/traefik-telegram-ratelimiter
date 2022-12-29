@@ -388,6 +388,8 @@ func (r *rateLimiter) startConsole(addr string) error {
 		return err
 	}
 
+	loggerInfo.Printf("management console is running on: %s", l.Addr().String())
+
 	go func() {
 		for {
 			c, err := l.Accept()

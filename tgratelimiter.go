@@ -500,6 +500,11 @@ func (r *rateLimiter) serveManagement(res http.ResponseWriter, req *http.Request
 		switch req.Method {
 		case http.MethodPut:
 			body, err := io.ReadAll(req.Body)
+			if err != nil {
+				http.Error(res, "500 internal server error", http.StatusInternalServerError)
+				return
+			}
+
 			limit, err := strconv.ParseInt(string(body), 10, 32)
 			if err != nil {
 				http.Error(res, "400 bad request", http.StatusBadRequest)

@@ -98,7 +98,3 @@ This plugin supports the following configuration parameters:
  - **GET `/wllimit`** -- returns hit limit for whitelisted ids
  - **PUT `/wllimit`** -- set hit limit for whitelisted ids. Example: `curl http://srv.com:8888/wllimit -X PUT -d -1`
 
-Usage example: 
- ```sh
- echo "add wl 123321" | socat tcp-connect:127.0.0.1:8888 -
- ```

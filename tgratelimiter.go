@@ -53,6 +53,8 @@ type Config struct {
 	Blacklist *string `json:"blacklist,omitempty" yaml:"blacklist,omitempty" toml:"blacklist,omitempty"`
 	// BlacklistURL
 	BlacklistURL *string `json:"blacklistURL,omitempty" yaml:"blacklistURL,omitempty" toml:"blacklistURL,omitempty"`
+	// BL/WL polling interval in seconds; interval <=0 == never refresh
+	ListPolling int32 `json:"listPolling" yaml:"listPolling" toml:"listPolling"`
 	// enable management console
 	Console bool `json:"console" yaml:"console" toml:"console"`
 	// management console port
@@ -71,8 +73,10 @@ func CreateConfig() *Config {
 
 // rateLimiter implements rate limiting with a set of tocken buckets;
 type rateLimiter struct {
-	next http.Handler
-	name string
+	next   http.Handler
+	config *Config
+	rwmu   sync.RWMutex
+	name   string
 	// expire time in seconds of the hit record
 	expire int64
 	// maximum hits limit
@@ -93,45 +97,35 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 		return nil, ErrInvalidHitTableSize
 	}
 
-	wl := make(map[int64]struct{}, 1024)
-	bl := make(map[int64]struct{}, 1024)
-	if config.Whitelist != nil {
-		err := readIDFile(*config.Whitelist, wl)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if config.WhitelistURL != nil {
-		err := readIDURL(*config.WhitelistURL, wl)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if config.Blacklist != nil {
-		err := readIDFile(*config.Blacklist, bl)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if config.BlacklistURL != nil {
-		err := readIDURL(*config.BlacklistURL, bl)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	r := &rateLimiter{
-		next:      next,
-		name:      name,
-		expire:    config.Expire,
-		limit:     config.Limit,
-		wlLimit:   config.WhitelistLimit,
-		whitelist: wl,
-		blacklist: bl,
-		hits:      newExpiryMap(config.HitTableSize),
+		next:    next,
+		config:  config,
+		name:    name,
+		expire:  config.Expire,
+		limit:   config.Limit,
+		wlLimit: config.WhitelistLimit,
+		hits:    newExpiryMap(config.HitTableSize),
+	}
+
+	r.updateLists()
+
+	loggerInfo.Printf("CONFIG %#v", config)
+
+	if config.ListPolling > 0 {
+		go func() {
+			t := time.NewTicker(time.Duration(config.ListPolling) * time.Second)
+			defer t.Stop()
+			loggerInfo.Printf("starting list polling with interval: %d", config.ListPolling)
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-t.C:
+					r.updateLists()
+				}
+			}
+		}()
 	}
 
 	if config.Console {
@@ -157,10 +151,12 @@ func (r *rateLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	r.rwmu.RLock()
 	// if id is blacklisted skip handling and return 200 OK
 	if _, ok := r.blacklist[tgID]; ok {
 		loggerInfo.Printf("rejecting blacklisted id: %d", tgID)
 		silentReject(rw)
+		r.rwmu.RUnlock()
 		return
 	}
 
@@ -172,14 +168,57 @@ func (r *rateLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		if r.wlLimit >= 0 && hits > r.wlLimit {
 			loggerInfo.Printf("rejecting whitelisted id: %d, limit: %d, hits: %d", tgID, r.wlLimit, hits)
 			silentReject(rw)
+			r.rwmu.RUnlock()
 			return
 		}
 	} else if r.limit >= 0 && hits > r.limit {
 		loggerInfo.Printf("rejecting regular id: %d, limit: %d, hits: %d", tgID, r.limit, hits)
 		silentReject(rw)
+		r.rwmu.RUnlock()
 		return
 	}
+	r.rwmu.RUnlock()
 	r.next.ServeHTTP(rw, req)
+}
+
+func (r *rateLimiter) updateLists() error {
+	wl := make(map[int64]struct{}, 1024)
+	bl := make(map[int64]struct{}, 1024)
+	if r.config.Whitelist != nil {
+		err := readIDFile(*r.config.Whitelist, wl)
+		if err != nil {
+			return err
+		}
+	}
+
+	if r.config.WhitelistURL != nil {
+		err := readIDURL(*r.config.WhitelistURL, wl)
+		if err != nil {
+			return err
+		}
+	}
+
+	if r.config.Blacklist != nil {
+		err := readIDFile(*r.config.Blacklist, bl)
+		if err != nil {
+			return err
+		}
+	}
+
+	if r.config.BlacklistURL != nil {
+		err := readIDURL(*r.config.BlacklistURL, bl)
+		if err != nil {
+			return err
+		}
+	}
+
+	loggerInfo.Printf("updating lists. wl recs: %d, bl recs: %d", len(wl), len(bl))
+	r.rwmu.Lock()
+	defer r.rwmu.Unlock()
+	r.whitelist = wl
+	r.blacklist = bl
+
+	return nil
 }
 
 func silentReject(rw http.ResponseWriter) {

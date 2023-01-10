@@ -60,6 +60,7 @@ http:
           whitelistURL: "https://server.com/whitelist.ids"
           blacklist: "/srv/config/tg-bot/blacklist.ids"
           blacklistURL: "https://server.com/blacklist.ids"
+          listPolling: 60
           console: true
           consoleAddress: ":8888"
     strip-webhook:
@@ -79,7 +80,8 @@ This plugin supports the following configuration parameters:
 - **whitelist** -- path to the file containing telegram IDs to apply `whitelistLimit` to. The file should contain each numeric ID on a separate line. Default value: `nil`
 - **whitelistURL** -- URL of the resource returning whilisted IDs. The same requirements as for `blacklist` file. Default: `nil`
 - **blacklist** -- path to the file containing telegram IDs to block right away. Hits counting is not applied to the blacklisted IDs. Default value: `nil`
-- **blacklistURL** - URL to the resource returning blacklisted IDs. Default: `nil`
+- **blacklistURL** -- URL to the resource returning blacklisted IDs. Default: `nil`
+- **listPolling** -- interval in seconds between periodic whitelist/blacklist updates. No updates when <= 0. Default: `0` (no periodic updates)
 - **console** -- whether to enable management console
 - **consoleAddress** - management console listener address. Console listener works as a tcp socket
 

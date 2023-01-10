@@ -18,7 +18,7 @@ experimental:
   plugins:
     traefik-telegram-ratelimiter:
       moduleName: github.com/bitzlato/traefik-telegram-ratelimiter
-      version: "v0.0.7"
+      version: "v0.1.0"
 
 entryPoints:
   https:
@@ -85,13 +85,18 @@ This plugin supports the following configuration parameters:
 - **console** -- whether to enable management console
 - **consoleAddress** - management console listener address. Console listener works as a tcp socket
 
-## Management console commands
+## HTTP Management server endpoints
 
- - **`show <tg id>`** -- shows accumulated hits for the specified telegram id. Example: `show 321`
- - **`reset <tg id>`** -- reset accumulated hits for the specified telegram id. Example: `reset 321`
- - **`add (wl,bl) <tg id>`** -- add the telegram id to the specified list. Example: `add bl 123` -- adds id `123` to the blacklist
- - **`del (wl,bl) <tg id>`** -- remove the telegram id from the specified list. Example: `del wl 321` -- removes id `321` from the whitelist
- - **`has (wl,bl) <tg id>`** -- check whether the telegram id is in the list. Example: `has wl 321` -- shows whether whitelist contains id `321`
+ - **GET `/hits`** -- returns hit table.
+ - **GET `/hits/<tg id>`** -- shows accumulated hits for the specified telegram id
+ - **DELETE `/hits/<tg id>`** -- reset hits for the specified telegram id
+ - **GET `/list/(wl|bl)/<tg id>`** -- check whether the telegram id is present in the list. Example: `curl http://srv.com:8888/list/bl/123`
+ - **PUT `/list/(wl|bl)/<tg id>`** -- add the telegram id to the specified list
+ - **DELETE `/list/(wl|bl)/<tg id>`** -- remove the telegram id from the specified list
+ - **GET `/limit`** -- returns hit limit for regular ids
+ - **PUT `/limit`** -- set hit limit for regular ids. Example: `curl http://srv.com:8888/limit -X PUT -d 20`
+ - **GET `/wllimit`** -- returns hit limit for whitelisted ids
+ - **PUT `/wllimit`** -- set hit limit for whitelisted ids. Example: `curl http://srv.com:8888/wllimit -X PUT -d -1`
 
 Usage example: 
  ```sh

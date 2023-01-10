@@ -53,11 +53,9 @@ type Config struct {
 	Blacklist *string `json:"blacklist,omitempty" yaml:"blacklist,omitempty" toml:"blacklist,omitempty"`
 	// BlacklistURL
 	BlacklistURL *string `json:"blacklistURL,omitempty" yaml:"blacklistURL,omitempty" toml:"blacklistURL,omitempty"`
-	// BL/WL polling interval in seconds; interval <=0 == never refresh
-	ListPolling int32 `json:"listPolling" yaml:"listPolling" toml:"listPolling"`
-	// enable management console
+	// enable http management server
 	Console bool `json:"console" yaml:"console" toml:"console"`
-	// management console port
+	// management server address
 	ConsoleAddress *string `json:"consoleAddress" yaml:"consoleAddress" toml:"consoleAddress"`
 }
 
@@ -109,29 +107,10 @@ func New(ctx context.Context, next http.Handler, config *Config, name string) (h
 
 	r.updateLists()
 
-	loggerInfo.Printf("CONFIG %#v", config)
-
-	if config.ListPolling > 0 {
-		go func() {
-			t := time.NewTicker(time.Duration(config.ListPolling) * time.Second)
-			defer t.Stop()
-			loggerInfo.Printf("starting list polling with interval: %d", config.ListPolling)
-
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case <-t.C:
-					r.updateLists()
-				}
-			}
-		}()
-	}
-
 	if config.Console {
-		err := r.startConsole(*config.ConsoleAddress)
+		err := r.startManagement(*config.ConsoleAddress)
 		if err != nil {
-			loggerError.Printf("failed to start management console: %s", err.Error())
+			loggerError.Printf("failed to start management server: %s", err.Error())
 			return nil, err
 		}
 	}
@@ -421,92 +400,138 @@ func (e *expiryMap) insert(h expiryHits) {
 	e.size++
 }
 
-func (r *rateLimiter) startConsole(addr string) error {
+// list returns all recorded hits
+func (e *expiryMap) list() map[int64]int32 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	m := make(map[int64]int32, e.size)
+	for i := 0; i < e.size; i++ {
+		j := (e.head + i) % e.cap
+		m[e.hits[j].id] = e.hits[j].hits
+	}
+	return m
+}
+
+func (r *rateLimiter) startManagement(addr string) error {
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
 	}
 
-	loggerInfo.Printf("management console is running on: %s", l.Addr().String())
-
 	go func() {
-		for {
-			c, err := l.Accept()
-			if err != nil {
-				loggerError.Printf("CONSOLE: error accepting connection: %s", err.Error())
-				continue
-			}
-
-			go r.handleConnection(c)
-		}
+		mux := http.NewServeMux()
+		mux.HandleFunc("/", r.serveManagement)
+		err = http.Serve(l, mux)
+		loggerError.Printf("management server finished. error: %s", err.Error())
 	}()
 
+	loggerInfo.Printf("management server is running on: %s", l.Addr().String())
 	return nil
 }
 
-func (r *rateLimiter) handleConnection(c net.Conn) {
-	defer c.Close()
+func (r *rateLimiter) serveManagement(res http.ResponseWriter, req *http.Request) {
+	p := strings.Split(req.URL.Path, "/")[1:]
+	n := len(p)
 
-outer:
-	for {
-		data, err := bufio.NewReader(c).ReadString('\n')
-		if err == io.EOF {
+	switch {
+	case n == 1 && p[0] == "reload" && req.Method == http.MethodPost:
+		r.updateLists()
+		res.WriteHeader(http.StatusNoContent)
+	case n == 1 && p[0] == "hits" && req.Method == http.MethodGet:
+		var data bytes.Buffer
+		for k, v := range r.hits.list() {
+			data.WriteString(fmt.Sprintf("%d %d\n", k, v))
+		}
+		res.Write(data.Bytes())
+	case n == 2 && p[0] == "hits":
+		id, err := parseTgID(p[1])
+		if err != nil {
+			http.Error(res, "400 bad request", http.StatusBadRequest)
 			return
-		} else if err != nil {
-			loggerError.Printf("CONSOLE: error reading console socket: %s", err.Error())
+		}
+		switch req.Method {
+		case http.MethodGet: // show hits
+			hits := r.hits.get(id)
+			res.Write([]byte(strconv.Itoa(int(hits))))
+		case http.MethodDelete: // reset hits
+			r.hits.reset(id)
+			res.WriteHeader(http.StatusNoContent)
+		}
+	case n == 3 && p[0] == "list":
+		id, err := parseTgID(p[2])
+		if err != nil {
+			http.Error(res, "400 bad request", http.StatusBadRequest)
 			return
 		}
 
-		cmdLine := strings.ToLower(strings.TrimSpace(string(data)))
-		args := strings.Split(cmdLine, " ")
+		var m map[int64]struct{}
+		switch p[1] {
+		case "bl":
+			m = r.blacklist
+		case "wl":
+			m = r.whitelist
+		default:
+			http.Error(res, "400 bad request", http.StatusBadRequest)
+			return
+		}
 
-		switch args[0] {
-		case "show", "reset":
-			id, err := parseTgID(args[1])
-			if err != nil {
-				c.Write([]byte(err.Error() + "\n"))
-				continue
-			}
-			if args[0] == "show" {
-				c.Write([]byte(strconv.Itoa(int(r.hits.get(id))) + "\n"))
+		switch req.Method {
+		case http.MethodGet: // check id presence
+			var result string
+			_, ok := m[id]
+			if ok {
+				result = "true"
 			} else {
-				r.hits.reset(id)
+				result = "false"
 			}
-		case "add", "del", "has":
-			id, err := parseTgID(args[2])
+			res.Write([]byte(result + "\n"))
+		case http.MethodDelete: // remove from list
+			delete(m, id)
+			res.WriteHeader(http.StatusNoContent)
+		case http.MethodPut: // add to list
+			m[id] = struct{}{}
+			res.WriteHeader(http.StatusCreated)
+		default:
+			res.Header().Add("Allow", "GET, PUT, DELETE")
+			http.Error(res, "405 method not allowed", http.StatusMethodNotAllowed)
+		}
+	case n == 1 && (p[0] == "limit" || p[0] == "wllimit"):
+		switch req.Method {
+		case http.MethodPut:
+			body, err := io.ReadAll(req.Body)
+			limit, err := strconv.ParseInt(string(body), 10, 32)
 			if err != nil {
-				c.Write([]byte(err.Error() + "\n"))
-				continue
-			}
-			var m map[int64]struct{}
-			switch args[1] {
-			case "bl":
-				m = r.blacklist
-			case "wl":
-				m = r.whitelist
-			default:
-				loggerError.Println("must specify either `bl` or `wl` list as the second argument")
-				continue
+				http.Error(res, "400 bad request", http.StatusBadRequest)
+				return
 			}
 
-			switch args[0] {
-			case "add":
-				m[id] = struct{}{}
-			case "del":
-				delete(m, id)
-			case "has":
-				var result string
-				_, ok := m[id]
-				if ok {
-					result = "true"
-				} else {
-					result = "false"
-				}
-				c.Write([]byte(result + "\n"))
+			r.rwmu.Lock()
+			defer r.rwmu.Unlock()
+			if p[0] == "limit" {
+				r.limit = int32(limit)
+
+			} else {
+				r.wlLimit = int32(limit)
 			}
-		case "exit":
-			break outer
+			res.WriteHeader(http.StatusNoContent)
+		case http.MethodGet:
+			r.rwmu.RLock()
+			defer r.rwmu.RUnlock()
+			var result int32
+			if p[0] == "limit" {
+				result = r.limit
+
+			} else {
+				result = r.wlLimit
+			}
+			res.Write([]byte(fmt.Sprintf("%d", result)))
+		default:
+			res.Header().Add("Allow", "GET, PUT")
+			http.Error(res, "405 method not allowed", http.StatusMethodNotAllowed)
 		}
+	default:
+		http.NotFound(res, req)
 	}
 }
 

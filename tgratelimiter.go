@@ -26,6 +26,7 @@ const isDeletedID int64 = -1 << 63
 
 var (
 	ErrUnknownMessageFormat = errors.New("unknown incoming telegram message format")
+	ErrEmptyMessage         = errors.New("empty message")
 	ErrInvalidHitTableSize  = errors.New("hit table size cannot be 0 or less")
 )
 
@@ -126,7 +127,11 @@ func (r *rateLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// skip rate limiting if failed to retrieve tg ID
 	if err != nil {
 		loggerError.Printf("error retrieving telegram id: %v", err)
-		r.next.ServeHTTP(rw, req)
+		if err == ErrEmptyMessage {
+			silentReject(rw)
+		} else {
+			r.next.ServeHTTP(rw, req)
+		}
 		return
 	}
 
@@ -227,6 +232,10 @@ func extractTgID(r io.Reader) (int64, error) {
 	body, err := io.ReadAll(r)
 	if err != nil {
 		return 0, err
+	}
+
+	if len(body) == 0 {
+		return 0, ErrEmptyMessage
 	}
 
 	var tgMsg tgMsg

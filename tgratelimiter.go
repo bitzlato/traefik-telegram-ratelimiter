@@ -130,13 +130,21 @@ func (r *rateLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	if r.rejectedTgID(tgID) {
+		silentReject(rw)
+		return
+	}
+
+	r.next.ServeHTTP(rw, req)
+}
+
+func (r *rateLimiter) rejectedTgID(tgID int64) bool {
 	r.rwmu.RLock()
+	defer r.rwmu.RUnlock()
 	// if id is blacklisted skip handling and return 200 OK
 	if _, ok := r.blacklist[tgID]; ok {
 		loggerInfo.Printf("rejecting blacklisted id: %d", tgID)
-		silentReject(rw)
-		r.rwmu.RUnlock()
-		return
+		return true
 	}
 
 	_, isWl := r.whitelist[tgID]
@@ -146,18 +154,14 @@ func (r *rateLimiter) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	if isWl {
 		if r.wlLimit >= 0 && hits > r.wlLimit {
 			loggerInfo.Printf("rejecting whitelisted id: %d, limit: %d, hits: %d", tgID, r.wlLimit, hits)
-			silentReject(rw)
-			r.rwmu.RUnlock()
-			return
+			return true
 		}
 	} else if r.limit >= 0 && hits > r.limit {
 		loggerInfo.Printf("rejecting regular id: %d, limit: %d, hits: %d", tgID, r.limit, hits)
-		silentReject(rw)
-		r.rwmu.RUnlock()
-		return
+		return true
 	}
-	r.rwmu.RUnlock()
-	r.next.ServeHTTP(rw, req)
+
+	return false
 }
 
 func (r *rateLimiter) updateLists() error {
